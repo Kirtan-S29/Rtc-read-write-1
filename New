@@ -1,0 +1,89 @@
+#include "cy_pdl.h"
+#include "cybsp.h"
+#include <stdio.h>
+
+#define RTC_ADDR 0x68
+
+cy_stc_scb_i2c_context_t i2c_context;
+
+/* ---------- BCD Conversion ---------- */
+uint8_t dec2bcd(uint8_t val)
+{
+    return ((val / 10) << 4) | (val % 10);
+}
+
+uint8_t bcd2dec(uint8_t val)
+{
+    return ((val >> 4) * 10) + (val & 0x0F);
+}
+
+/* ---------- Write Time (HH MM SS) ---------- */
+void RTC_Write_Time(uint8_t hr, uint8_t min, uint8_t sec)
+{
+    uint8_t buffer[4];
+
+    buffer[0] = 0x00;              // Start from seconds register
+    buffer[1] = dec2bcd(sec);
+    buffer[2] = dec2bcd(min);
+    buffer[3] = dec2bcd(hr);
+
+    cy_stc_scb_i2c_master_xfer_config_t xfer = {
+        .slaveAddress = RTC_ADDR,
+        .buffer       = buffer,
+        .bufferSize   = 4,
+        .xferPending  = false
+    };
+
+    Cy_SCB_I2C_MasterTransfer(I2C_HW, &xfer, &i2c_context);
+}
+
+/* ---------- Read Time (HH MM SS) ---------- */
+void RTC_Read_Time(uint8_t *hr, uint8_t *min, uint8_t *sec)
+{
+    uint8_t reg = 0x00;
+    uint8_t data[3];
+
+    cy_stc_scb_i2c_master_xfer_config_t xfer;
+
+    /* Step 1: Write register address (Repeated Start) */
+    xfer.slaveAddress = RTC_ADDR;
+    xfer.buffer       = &reg;
+    xfer.bufferSize   = 1;
+    xfer.xferPending  = true;   // KEEP BUS ACTIVE
+
+    Cy_SCB_I2C_MasterTransfer(I2C_HW, &xfer, &i2c_context);
+
+    /* Step 2: Read 3 bytes */
+    xfer.buffer       = data;
+    xfer.bufferSize   = 3;
+    xfer.xferPending  = false;
+
+    Cy_SCB_I2C_MasterTransfer(I2C_HW, &xfer, &i2c_context);
+
+    *sec = bcd2dec(data[0] & 0x7F);
+    *min = bcd2dec(data[1]);
+    *hr  = bcd2dec(data[2] & 0x3F);
+}
+
+int main(void)
+{
+    cybsp_init();
+    __enable_irq();
+
+    Cy_SCB_I2C_Init(I2C_HW, &I2C_HW_config, &i2c_context);
+    Cy_SCB_I2C_Enable(I2C_HW);
+
+    uint8_t hr, min, sec;
+
+    /* Set Time */
+    RTC_Write_Time(10, 45, 30);
+
+    while(1)
+    {
+        RTC_Read_Time(&hr, &min, &sec);
+
+        printf("Time: %02d:%02d:%02d\r\n", hr, min, sec);
+
+        Cy_SysLib_Delay(1000);
+    }
+}
